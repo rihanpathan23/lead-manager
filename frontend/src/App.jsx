@@ -1,122 +1,256 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import { useState, useEffect, useCallback } from 'react';
+import { AlertCircle, RefreshCw, CheckCircle2 } from 'lucide-react';
+import Navbar from './components/Navbar';
+import StatsCards from './components/StatsCards';
+import FilterBar from './components/FilterBar';
+import LeadTable from './components/LeadTable';
+import LeadFormModal from './components/LeadFormModal';
+import DeleteConfirmModal from './components/DeleteConfirmModal';
+import {
+  fetchLeads,
+  fetchLeadStats,
+  createLead,
+  updateLead,
+  deleteLead,
+} from './api/leadApi';
 
-function App() {
-  const [count, setCount] = useState(0)
+export default function App() {
+  const [leads, setLeads] = useState([]);
+  const [stats, setStats] = useState({
+    total: 0,
+    New: 0,
+    Contacted: 0,
+    Qualified: 0,
+    Lost: 0,
+  });
+
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [sortBy, setSortBy] = useState('createdAt');
+  const [order, setOrder] = useState('desc');
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({
+    total: 0,
+    page: 1,
+    limit: 8,
+    totalPages: 1,
+  });
+
+  const [loading, setLoading] = useState(true);
+  const [apiError, setApiError] = useState('');
+  const [toast, setToast] = useState('');
+
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingLead, setEditingLead] = useState(null);
+  const [leadToDelete, setLeadToDelete] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [updatingStatusId, setUpdatingStatusId] = useState(null);
+
+  // Debounce search input by 300ms
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Auto-hide toast notifications
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(''), 3000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setApiError('');
+
+    try {
+      const [leadsRes, statsRes] = await Promise.all([
+        fetchLeads({
+          search: debouncedSearch,
+          status: statusFilter,
+          sortBy,
+          order,
+          page,
+          limit: 8,
+        }),
+        fetchLeadStats(),
+      ]);
+
+      setLeads(leadsRes.data || []);
+      setPagination(
+        leadsRes.pagination || { total: 0, page: 1, limit: 8, totalPages: 1 }
+      );
+      setStats(statsRes.data || {});
+    } catch (err) {
+      setApiError(
+        err.response?.data?.message ||
+          'Unable to connect to the server. Please make sure the backend API is running.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [debouncedSearch, statusFilter, sortBy, order, page]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const handleOpenAddModal = () => {
+    setEditingLead(null);
+    setIsFormOpen(true);
+  };
+
+  const handleOpenEditModal = (lead) => {
+    setEditingLead(lead);
+    setIsFormOpen(true);
+  };
+
+  const handleSaveLead = async (formData) => {
+    if (editingLead) {
+      await updateLead(editingLead._id, formData);
+      setToast('Lead updated successfully');
+    } else {
+      await createLead(formData);
+      setToast('Lead added successfully');
+    }
+    await loadData();
+  };
+
+  const handleQuickStatusChange = async (id, newStatus) => {
+    setUpdatingStatusId(id);
+    setApiError('');
+    try {
+      await updateLead(id, { status: newStatus });
+      setToast(`Status updated to ${newStatus}`);
+      await loadData();
+    } catch (err) {
+      setApiError(
+        err.response?.data?.message || 'Failed to update lead status.'
+      );
+    } finally {
+      setUpdatingStatusId(null);
+    }
+  };
+
+  const handleConfirmDelete = async (id) => {
+    setIsDeleting(true);
+    setApiError('');
+    try {
+      await deleteLead(id);
+      setLeadToDelete(null);
+      setToast('Lead deleted successfully');
+      if (leads.length === 1 && page > 1) {
+        setPage((prev) => prev - 1);
+      } else {
+        await loadData();
+      }
+    } catch (err) {
+      setApiError(err.response?.data?.message || 'Failed to delete lead.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleStatusChange = (newStatus) => {
+    setStatusFilter(newStatus);
+    setPage(1);
+  };
+
+  const handleSortChange = (newSortBy, newOrder) => {
+    setSortBy(newSortBy);
+    setOrder(newOrder);
+    setPage(1);
+  };
+
+  const handleResetFilters = () => {
+    setSearch('');
+    setDebouncedSearch('');
+    setStatusFilter('All');
+    setPage(1);
+  };
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="min-h-screen bg-slate-50">
+      <Navbar onOpenAddModal={handleOpenAddModal} />
 
-      <div className="ticks"></div>
+      <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+        {/* Toast Message */}
+        {toast && (
+          <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white shadow-lg">
+            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+            <span>{toast}</span>
+          </div>
+        )}
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+        {/* Graceful API Error Banner */}
+        {apiError && (
+          <div className="flex flex-col items-start justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3.5 text-sm text-rose-800 sm:flex-row sm:items-center">
+            <div className="flex items-center gap-2.5">
+              <AlertCircle className="h-5 w-5 shrink-0 text-rose-600" />
+              <span>{apiError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={loadData}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-rose-700"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Retry
+            </button>
+          </div>
+        )}
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+        {/* Dashboard Status Counts */}
+        <StatsCards
+          stats={stats}
+          activeStatus={statusFilter}
+          onSelectStatus={handleStatusChange}
+        />
+
+        {/* Search, Filter & Sort Controls */}
+        <FilterBar
+          search={search}
+          onSearchChange={setSearch}
+          status={statusFilter}
+          onStatusChange={handleStatusChange}
+          sortBy={sortBy}
+          order={order}
+          onSortChange={handleSortChange}
+          onResetFilters={handleResetFilters}
+        />
+
+        {/* Leads Data Table */}
+        <LeadTable
+          leads={leads}
+          loading={loading}
+          pagination={pagination}
+          onPageChange={setPage}
+          onEdit={handleOpenEditModal}
+          onDelete={setLeadToDelete}
+          onQuickStatusChange={handleQuickStatusChange}
+          updatingStatusId={updatingStatusId}
+        />
+      </main>
+
+      {/* Add / Edit Modal */}
+      <LeadFormModal
+        isOpen={isFormOpen}
+        onClose={() => setIsFormOpen(false)}
+        onSubmit={handleSaveLead}
+        initialData={editingLead}
+      />
+
+      {/* Delete Confirmation Modal */}
+      <DeleteConfirmModal
+        lead={leadToDelete}
+        isDeleting={isDeleting}
+        onCancel={() => setLeadToDelete(null)}
+        onConfirm={handleConfirmDelete}
+      />
+    </div>
+  );
 }
-
-export default App
