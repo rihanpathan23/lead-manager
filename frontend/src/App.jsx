@@ -6,6 +6,7 @@ import FilterBar from './components/FilterBar';
 import LeadTable from './components/LeadTable';
 import LeadFormModal from './components/LeadFormModal';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
+import { PageLoader } from './components/Loader';
 import {
   fetchLeads,
   fetchLeadStats,
@@ -37,7 +38,9 @@ export default function App() {
     totalPages: 1,
   });
 
+  const [initialLoading, setInitialLoading] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState('');
   const [apiError, setApiError] = useState('');
   const [toast, setToast] = useState('');
 
@@ -63,37 +66,41 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [toast]);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setApiError('');
+  const loadData = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!silent) setLoading(true);
+      setApiError('');
 
-    try {
-      const [leadsRes, statsRes] = await Promise.all([
-        fetchLeads({
-          search: debouncedSearch,
-          status: statusFilter,
-          sortBy,
-          order,
-          page,
-          limit: 8,
-        }),
-        fetchLeadStats(),
-      ]);
+      try {
+        const [leadsRes, statsRes] = await Promise.all([
+          fetchLeads({
+            search: debouncedSearch,
+            status: statusFilter,
+            sortBy,
+            order,
+            page,
+            limit: 8,
+          }),
+          fetchLeadStats(),
+        ]);
 
-      setLeads(leadsRes.data || []);
-      setPagination(
-        leadsRes.pagination || { total: 0, page: 1, limit: 8, totalPages: 1 }
-      );
-      setStats(statsRes.data || {});
-    } catch (err) {
-      setApiError(
-        err.response?.data?.message ||
-          'Unable to connect to the server. Please make sure the backend API is running.'
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [debouncedSearch, statusFilter, sortBy, order, page]);
+        setLeads(leadsRes.data || []);
+        setPagination(
+          leadsRes.pagination || { total: 0, page: 1, limit: 8, totalPages: 1 }
+        );
+        setStats(statsRes.data || {});
+      } catch (err) {
+        setApiError(
+          err.response?.data?.message ||
+            'Unable to connect to the server. Please make sure the backend API is running.'
+        );
+      } finally {
+        if (!silent) setLoading(false);
+        setInitialLoading(false);
+      }
+    },
+    [debouncedSearch, statusFilter, sortBy, order, page]
+  );
 
   useEffect(() => {
     loadData();
@@ -110,48 +117,66 @@ export default function App() {
   };
 
   const handleSaveLead = async (formData) => {
-    if (editingLead) {
-      await updateLead(editingLead._id, formData);
-      setToast('Lead updated successfully');
-    } else {
-      await createLead(formData);
-      setToast('Lead added successfully');
+    const isEditing = Boolean(editingLead);
+    setActionLoading(isEditing ? 'Updating lead...' : 'Adding new lead...');
+
+    try {
+      if (isEditing) {
+        await updateLead(editingLead._id, formData);
+      } else {
+        await createLead(formData);
+      }
+
+      setIsFormOpen(false);
+      setEditingLead(null);
+      setActionLoading('Refreshing leads...');
+      await loadData({ silent: true });
+      setToast(
+        isEditing ? 'Lead updated successfully' : 'Lead added successfully'
+      );
+    } finally {
+      setActionLoading('');
     }
-    await loadData();
   };
 
   const handleQuickStatusChange = async (id, newStatus) => {
     setUpdatingStatusId(id);
+    setActionLoading(`Updating status to ${newStatus}...`);
     setApiError('');
+
     try {
       await updateLead(id, { status: newStatus });
+      await loadData({ silent: true });
       setToast(`Status updated to ${newStatus}`);
-      await loadData();
     } catch (err) {
       setApiError(
         err.response?.data?.message || 'Failed to update lead status.'
       );
     } finally {
       setUpdatingStatusId(null);
+      setActionLoading('');
     }
   };
 
   const handleConfirmDelete = async (id) => {
     setIsDeleting(true);
+    setActionLoading('Deleting lead...');
     setApiError('');
+
     try {
       await deleteLead(id);
       setLeadToDelete(null);
-      setToast('Lead deleted successfully');
       if (leads.length === 1 && page > 1) {
         setPage((prev) => prev - 1);
       } else {
-        await loadData();
+        await loadData({ silent: true });
       }
+      setToast('Lead deleted successfully');
     } catch (err) {
       setApiError(err.response?.data?.message || 'Failed to delete lead.');
     } finally {
       setIsDeleting(false);
+      setActionLoading('');
     }
   };
 
@@ -195,7 +220,7 @@ export default function App() {
             </div>
             <button
               type="button"
-              onClick={loadData}
+              onClick={() => loadData()}
               className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-rose-700"
             >
               <RefreshCw className="h-3.5 w-3.5" />
@@ -223,17 +248,23 @@ export default function App() {
           onResetFilters={handleResetFilters}
         />
 
-        {/* Leads Data Table */}
-        <LeadTable
-          leads={leads}
-          loading={loading}
-          pagination={pagination}
-          onPageChange={setPage}
-          onEdit={handleOpenEditModal}
-          onDelete={setLeadToDelete}
-          onQuickStatusChange={handleQuickStatusChange}
-          updatingStatusId={updatingStatusId}
-        />
+        {/* Leads Data Table / Inline Loader */}
+        {loading && !initialLoading ? (
+          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <PageLoader message="Updating leads..." />
+          </div>
+        ) : (
+          <LeadTable
+            leads={leads}
+            loading={loading}
+            pagination={pagination}
+            onPageChange={setPage}
+            onEdit={handleOpenEditModal}
+            onDelete={setLeadToDelete}
+            onQuickStatusChange={handleQuickStatusChange}
+            updatingStatusId={updatingStatusId}
+          />
+        )}
       </main>
 
       {/* Add / Edit Modal */}
@@ -251,6 +282,14 @@ export default function App() {
         onCancel={() => setLeadToDelete(null)}
         onConfirm={handleConfirmDelete}
       />
+
+      {/* Full-Screen Glassmorphism Loader (Initial Load & Save/Update/Delete Actions) */}
+      {(initialLoading || actionLoading) && (
+        <PageLoader
+          overlay
+          message={actionLoading || 'Loading your sales pipeline...'}
+        />
+      )}
     </div>
   );
 }
